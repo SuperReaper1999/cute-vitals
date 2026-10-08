@@ -2,6 +2,8 @@
 import os, platform, re, subprocess, time
 from pathlib import Path
 
+from vitals_metrics import parse_cpu_stats, parse_meminfo
+
 try:
     import psutil
 except ImportError:
@@ -43,18 +45,7 @@ def ram_reading():
             return None
         memory = psutil.virtual_memory()
         return memory.used / 1024**2, memory.total / 1024**2
-    values = {}
-    for line in (read_text('/proc/meminfo') or '').splitlines():
-        key, _, rest = line.partition(':')
-        number = rest.strip().split()[0] if rest.strip() else None
-        if number:
-            # /proc/meminfo reports memory in KiB; convert to MiB for the UI.
-            values[key] = float(number) / 1024
-    total = values.get('MemTotal')
-    available = values.get('MemAvailable')
-    if total is None or available is None:
-        return None
-    return total - available, total
+    return parse_meminfo(read_text('/proc/meminfo') or '')
 
 def cpu_stats():
     """Return cumulative CPU tick counts for the total CPU and each core.
@@ -65,15 +56,7 @@ def cpu_stats():
     # Windows does not expose /proc/stat; refresh() uses psutil directly there.
     if os.name == 'nt':
         return []
-    rows = []
-    for line in (read_text('/proc/stat') or '').splitlines():
-        p = line.split()
-        # The first row is named "cpu" and contains the real system-wide total.
-        # Following rows are named cpu0, cpu1, etc. for individual cores.
-        if p and (p[0] == 'cpu' or p[0][3:].isdigit()):
-            vals = list(map(int, p[1:])); idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
-            rows.append((p[0], sum(vals), idle))
-    return rows
+    return parse_cpu_stats(read_text('/proc/stat') or '')
 
 def temp_reading():
     """Find a sensible CPU temperature from hwmon or thermal-zone sensors."""
