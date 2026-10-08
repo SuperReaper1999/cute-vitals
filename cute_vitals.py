@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, platform, re, subprocess, time
+import math, os, platform, re, subprocess, time
 from pathlib import Path
 
 try:
@@ -75,6 +75,16 @@ def cpu_stats():
             rows.append((p[0], sum(vals), idle))
     return rows
 
+def parse_temperature(raw):
+    """Convert a sysfs millidegree value, ignoring malformed sensor readings."""
+    if not raw:
+        return None
+    try:
+        value = float(raw) / 1000
+    except ValueError:
+        return None
+    return value if math.isfinite(value) else None
+
 def temp_reading():
     """Find a sensible CPU temperature from hwmon or thermal-zone sensors."""
     if os.name == 'nt':
@@ -91,14 +101,14 @@ def temp_reading():
     for hw in sorted((BASE / 'class/hwmon').glob('hwmon*')):
         name = read_text(hw / 'name') or ''
         for inp in hw.glob('temp*_input'):
-            raw = read_text(inp)
-            if raw:
+            temperature = parse_temperature(read_text(inp))
+            if temperature is not None:
                 label = read_text(inp.with_name(inp.name.replace('_input', '_label'))) or name or 'Temperature'
-                candidates.append((label, float(raw) / 1000))
+                candidates.append((label, temperature))
     for z in sorted((BASE / 'class/thermal').glob('thermal_zone*')):
-        raw = read_text(z / 'temp')
-        if raw:
-            candidates.append((read_text(z / 'type') or 'Thermal zone', float(raw) / 1000))
+        temperature = parse_temperature(read_text(z / 'temp'))
+        if temperature is not None:
+            candidates.append((read_text(z / 'type') or 'Thermal zone', temperature))
     # Prefer a package/main-die reading: that represents the CPU as a whole.
     # Individual "Core 0" readings are only a fallback when no package sensor exists.
     def sensor_priority(item):
@@ -296,4 +306,5 @@ class Window(QMainWindow):
         self.status.setText(f'Updated {time.strftime("%H:%M:%S")} · ' + ('GPU query OK' if gpu else 'GPU query unavailable; will retry'))
 
 # QApplication owns the Qt event loop: it keeps the window alive and dispatches timers.
-app=QApplication([]); app.setApplicationName('Cute Vitals'); w=Window(); w.show(); app.exec()
+if __name__ == '__main__':
+    app=QApplication([]); app.setApplicationName('Cute Vitals'); w=Window(); w.show(); app.exec()
