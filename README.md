@@ -21,6 +21,14 @@ python3 -m venv .venv
 
 On Windows, install the dependencies with `py -m pip install PyQt6 psutil`, then run `py cute_vitals.py`. The app reads CPU, RAM, frequency, and process data through psutil on Windows, while Linux continues to use `/proc` and sysfs directly. NVIDIA values use `nvidia-smi`; AMD values use the Linux `amdgpu` sysfs interface when available. ROCm is not required for Linux AMD support.
 
+## Tests
+
+The parser tests do not require a GPU or an open Qt window:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 ## What it shows
 
 - CPU model, total load, package/main temperature, current frequency, and per-core load
