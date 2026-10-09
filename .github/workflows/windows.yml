@@ -2,23 +2,39 @@ name: Windows CI
 
 on:
   push:
-    branches: [ win-support-verify ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyqt6 psutil
-      - name: Run application (smoke test)
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Qt startup check (offscreen)
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: |
-          python cute_vitals.py --version || true
+          python - <<'PY'
+          import sys
+          from PyQt6.QtWidgets import QApplication, QWidget
+          app = QApplication(sys.argv)
+          w = QWidget()
+          w.show()
+          app.processEvents()
+          sys.exit(0)
+          PY
