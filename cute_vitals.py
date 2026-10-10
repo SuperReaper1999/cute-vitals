@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import math, os, platform, re, subprocess, time
+import math, os, platform, re, shlex, subprocess, time
 from pathlib import Path
 
 from vitals_metrics import parse_cpu_stats, parse_meminfo
@@ -102,6 +102,34 @@ def temp_reading():
         return 3
     return (sorted(candidates, key=sensor_priority) or [("Unavailable", None)])[0]
 
+def amd_gpu_name(device):
+    """Prefer a product name, or use the optional PCI utility for a readable model."""
+    product_name = read_text(device / 'product_name')
+    if product_name:
+        return product_name
+
+    # The sysfs 'device' file is a numeric PCI ID, not a display name.
+    uevent = read_text(device / 'uevent') or ''
+    match = re.search(r'^PCI_SLOT_NAME=([a-zA-Z0-9:.]+)$', uevent, re.MULTILINE)
+    if match:
+        try:
+            result = subprocess.run(
+                ['lspci', '-s', match.group(1), '-mm'],
+                text=True, capture_output=True, timeout=.5,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                # lspci -mm: slot, class, vendor, device description.
+                fields = shlex.split(result.stdout.splitlines()[0])
+                if len(fields) >= 4:
+                    model = fields[3].strip()
+                    if model and not re.fullmatch(r'(?:0x)?[0-9a-fA-F]{4}', model):
+                        return model
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+
+    return 'AMD GPU'
+
+
 def gpu_reading():
     """Read GPU metrics, preferring NVIDIA and then falling back to AMD."""
     # Keep this list aligned with the command requested for the project.
@@ -130,7 +158,7 @@ def gpu_reading():
             if raw:
                 temp = float(raw) / 1000
                 break
-        name = read_text(device / 'product_name') or read_text(device / 'device') or 'AMD GPU'
+        name = amd_gpu_name(device)
         # AMD VRAM and power sysfs values are bytes and microwatts respectively.
         return {'name': name, 'temp': temp, 'load': float(load) if load else None,
                 'mem_used': float(used) / 1024**2 if used else 0,
