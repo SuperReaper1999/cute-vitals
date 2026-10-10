@@ -270,7 +270,21 @@ class Window(QMainWindow):
         # GPU metrics are independent of CPU sampling and may temporarily fail.
         gpu,err=gpu_reading();
         if gpu:
-            self.gpu_name.setText(gpu['name']); self.gpu_load.set_value(gpu['load']); self.gpu_temp.set_value(gpu['temp'],f"{gpu['temp']:.0f}°C"); self.vram.set_value(gpu['mem_used']/gpu['mem_total']*100 if gpu['mem_total'] else None,f"{gpu['mem_used']:.0f} / {gpu['mem_total']:.0f} MiB"); self.power.set_value(gpu['power'],f"{gpu['power']:.1f} W")
+            self.gpu_name.setText(gpu['name'])
+            self.gpu_load.set_value(gpu['load'])
+            self.gpu_temp.set_value(
+                gpu['temp'],
+                f"{gpu['temp']:.0f}°C" if gpu['temp'] is not None else None,
+            )
+            vram_total = gpu['mem_total']
+            self.vram.set_value(
+                gpu['mem_used'] / vram_total * 100 if vram_total else None,
+                f"{gpu['mem_used']:.0f} / {vram_total:.0f} MiB" if vram_total else None,
+            )
+            self.power.set_value(
+                gpu['power'],
+                f"{gpu['power']:.1f} W" if gpu['power'] is not None else None,
+            )
         else:
             self.gpu_name.setText('GPU: unavailable'); [g.set_value(None) for g in (self.gpu_load,self.gpu_temp,self.vram,self.power)]
         if self.graph_toggle.isChecked():
