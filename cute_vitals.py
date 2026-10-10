@@ -215,6 +215,18 @@ class HistoryGraph(QWidget):
                 x = left + i * width / max(1, len(self.values) - 1); y = top + height - max(0, min(1, value / self.maximum)) * height; points.append((x, y))
             for a, b in zip(points, points[1:]): painter.drawLine(int(a[0]), int(a[1]), int(b[0]), int(b[1]))
 
+class NumericTableItem(QTableWidgetItem):
+    """Sort process metrics by their underlying numbers, not display strings."""
+    def __init__(self, text, number):
+        super().__init__(text)
+        self.number = number
+
+    def __lt__(self, other):
+        if isinstance(other, NumericTableItem):
+            return self.number < other.number
+        return super().__lt__(other)
+
+
 class Window(QMainWindow):
     def __init__(self):
         # Store the previous /proc/stat sample so refresh() can calculate usage.
@@ -229,7 +241,7 @@ class Window(QMainWindow):
         ram_box = self.section('RAM'); self.ram=Gauge('Memory',100,''); ram_box.layout().addWidget(self.ram); layout.addWidget(ram_box)
         gpu_box = self.section('GPU'); self.gpu_name=QLabel('GPU: searching…'); self.gpu_load=Gauge('GPU load'); self.gpu_temp=Gauge('Temperature',100,'°C'); self.vram=Gauge('VRAM',100,''); self.power=Gauge('Power',250,' W'); gpu_metrics=QVBoxLayout(); gpu_metrics.addWidget(self.gpu_name); gpu_metrics.addWidget(self.gpu_load); gpu_metrics.addWidget(self.gpu_temp); gpu_metrics.addWidget(self.vram); gpu_metrics.addWidget(self.power); self.gpu_usage_graph=HistoryGraph('Usage','%',100); self.gpu_temp_graph=HistoryGraph('Temperature','°C',100); self.gpu_graph_column=QWidget(); self.gpu_graphs=QVBoxLayout(self.gpu_graph_column); self.gpu_graphs.addWidget(self.gpu_usage_graph); self.gpu_graphs.addWidget(self.gpu_temp_graph); gpu_content=QHBoxLayout(); gpu_content.addLayout(gpu_metrics, 1); gpu_content.addWidget(self.gpu_graph_column, 1); gpu_box.layout().addLayout(gpu_content); self.gpu_graph_column.hide(); layout.addWidget(gpu_box)
         # Optional Task Manager-style process list; hidden to preserve the compact default view.
-        self.process_panel = self.section('Processes'); self.process_table = QTableWidget(0, 5); self.process_table.setHorizontalHeaderLabels(['PID', 'Process', 'CPU', 'Memory', 'RAM']); self.process_table.horizontalHeader().setStretchLastSection(True); self.process_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers); self.process_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection); self.process_table.verticalHeader().setVisible(False); self.process_panel.layout().addWidget(self.process_table); self.process_panel.hide(); layout.addWidget(self.process_panel); layout.addStretch(); self.status=QLabel('Refreshing…'); self.status.setObjectName('muted'); layout.addWidget(self.status)
+        self.process_panel = self.section('Processes'); self.process_table = QTableWidget(0, 5); self.process_table.setHorizontalHeaderLabels(['PID', 'Process', 'CPU', 'Memory', 'RAM']); self.process_table.horizontalHeader().setStretchLastSection(True); self.process_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers); self.process_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection); self.process_table.verticalHeader().setVisible(False); self.process_table.horizontalHeader().sectionClicked.connect(self.on_process_sort_clicked); self.process_panel.layout().addWidget(self.process_table); self.process_panel.hide(); layout.addWidget(self.process_panel); layout.addStretch(); self.status=QLabel('Refreshing…'); self.status.setObjectName('muted'); layout.addWidget(self.status)
         self.setStyleSheet('''QMainWindow { background:#171923; color:#eef0f6; } QLabel { font-size:13px; } #title { font-size:24px; font-weight:700; color:#f5a7d7; } #muted { color:#9ba1b5; } QFrame { background:#202331; border:1px solid #303548; border-radius:14px; } QProgressBar { background:#303548; border:0; border-radius:5px; } QProgressBar::chunk { border-radius:5px; background:#65d6a2; } QProgressBar[level="amber"]::chunk { background:#f6c85f; } QProgressBar[level="red"]::chunk { background:#f27d8a; } QCheckBox { color:#b9bfd1; }''')
         # Qt calls refresh every 1,000 ms, then we also refresh immediately on startup.
         self.timer=QTimer(self); self.timer.timeout.connect(self.refresh); self.timer.start(1000); self.refresh()
@@ -240,6 +252,14 @@ class Window(QMainWindow):
     def toggle_processes(self, on):
         """Show or hide the process table; data is refreshed only while visible."""
         self.process_panel.setVisible(on)
+
+    def on_process_sort_clicked(self, column):
+        """First click enables sorting; default CPU order stays intact until then."""
+        if not self.process_table.isSortingEnabled():
+            self.process_table.setSortingEnabled(True)
+            initial = (Qt.SortOrder.DescendingOrder if column in (2, 3, 4)
+                       else Qt.SortOrder.AscendingOrder)
+            self.process_table.sortItems(column, initial)
 
     def toggle_graphs(self, on):
         # Turning graphs off deliberately discards the session's samples.
@@ -282,10 +302,19 @@ class Window(QMainWindow):
             self.cpu_usage_graph.set_values(self.history['cpu_load']); self.cpu_temp_graph.set_values(self.history['cpu_temp'])
             self.gpu_usage_graph.set_values(self.history['gpu_load']); self.gpu_temp_graph.set_values(self.history['gpu_temp'])
         if self.process_toggle.isChecked():
-            rows = process_rows(); self.process_table.setRowCount(len(rows))
+            # Avoid row shuffling while populating a sorted QTableWidget.
+            was_sorted = self.process_table.isSortingEnabled()
+            self.process_table.setSortingEnabled(False)
+            rows = process_rows()
+            self.process_table.setRowCount(len(rows))
             for row, (pid, name, cpu, mem, rss) in enumerate(rows):
                 values = (pid, name, f'{cpu:.1f}%', f'{mem:.1f}%', f'{rss / 1024:.0f} MiB')
-                for column, value in enumerate(values): self.process_table.setItem(row, column, QTableWidgetItem(value))
+                numbers = (int(pid), None, cpu, mem, rss)
+                for column, (value, number) in enumerate(zip(values, numbers)):
+                    item = (QTableWidgetItem(value) if number is None
+                            else NumericTableItem(value, number))
+                    self.process_table.setItem(row, column, item)
+            self.process_table.setSortingEnabled(was_sorted)
         self.status.setText(f'Updated {time.strftime("%H:%M:%S")} · ' + ('GPU query OK' if gpu else 'GPU query unavailable; will retry'))
 
 # QApplication owns the Qt event loop: it keeps the window alive and dispatches timers.
