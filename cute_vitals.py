@@ -138,6 +138,29 @@ def gpu_reading():
                 'power': float(power) / 1_000_000 if power else None}, None
     return None, 'No supported NVIDIA or AMD GPU found'
 
+def parse_ps_output(output, limit=12):
+    """Parse ps rows from the right so process names can contain spaces.
+
+    Ignore a malformed sample rather than discarding other usable processes.
+    """
+    rows = []
+    for line in output.splitlines():
+        try:
+            pid_and_name, cpu_text, memory_text, rss_text = line.rsplit(None, 3)
+            pid, name = pid_and_name.split(None, 1)
+            if not pid.isdecimal() or not name:
+                continue
+            cpu, memory, rss = float(cpu_text), float(memory_text), int(rss_text)
+            if not all(math.isfinite(value) and value >= 0 for value in (cpu, memory, rss)):
+                continue
+        except (ValueError, IndexError):
+            continue
+        rows.append((pid, name, cpu, memory, rss))
+        if len(rows) >= limit:
+            break
+    return rows
+
+
 def process_rows():
     """Return the busiest processes using the standard Linux ps utility."""
     if os.name == 'nt':
@@ -155,12 +178,7 @@ def process_rows():
     try:
         # ps already calculates process CPU and memory percentages for us.
         result = subprocess.run(['ps', '-eo', 'pid=,comm=,%cpu=,%mem=,rss=', '--sort=-%cpu'], text=True, capture_output=True, timeout=.5)
-        rows = []
-        for line in result.stdout.splitlines()[:12]:
-            parts = line.split()
-            if len(parts) >= 5:
-                rows.append((parts[0], parts[1], float(parts[2]), float(parts[3]), int(parts[4])))
-        return rows
+        return parse_ps_output(result.stdout)
     except (OSError, subprocess.SubprocessError, ValueError):
         return []
 
